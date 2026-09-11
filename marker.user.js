@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Marker Pro
+// @name         Marker
 // @namespace    https://github.com/reemaouati
-// @version      1.1
-// @description  Professional text highlighter with glassmorphism design, color picker, and persistent state.
+// @version      1.0
+// @description  Professional text highlighter with glassmorphism design and persistent state.
 // @author       reemaouati
 // @downloadURL  https://github.com/reemaouati/marker/raw/main/marker.user.js
 // @supportURL   https://github.com/reemaouati/marker/issues
@@ -17,12 +17,17 @@
     'use strict';
 
     class MarkerPro {
+        // ========================================
+        // 1. Constructor & Property Binding
+        // ========================================
         constructor() {
+            this.colors = ['yellow', 'red', 'orange', 'blue', 'green', 'black'];
             this.state = this.loadState();
             this.ui = null;
             this.isDragging = false;
             this.dragOffset = { x: 0, y: 0 };
 
+            // Bind event handlers to preserve 'this' context
             this.handleMouseDown = this.handleMouseDown.bind(this);
             this.handleMouseMove = this.handleMouseMove.bind(this);
             this.handleMouseUp = this.handleMouseUp.bind(this);
@@ -33,31 +38,35 @@
             this.init();
         }
 
+        // ========================================
+        // 2. State Management
+        // ========================================
+        /**
+         * Load persisted state from localStorage with validation
+         */
         loadState() {
             try {
                 const saved = localStorage.getItem('marker_pro_state');
-                const defaults = { color: '#ffff00', pos: { x: 100, y: 100 } };
+                const defaults = { colorIndex: 0, pos: { x: 100, y: 100 } };
                 
                 if (!saved) return defaults;
 
                 const state = JSON.parse(saved);
                 
-                // التوافقية مع الإصدارات السابقة التي كانت تستخدم colorIndex
-                if (state.colorIndex !== undefined) {
-                    state.color = defaults.color;
-                    delete state.colorIndex;
-                }
-                
+                // Validate position is within current viewport
                 state.pos.x = Math.max(0, Math.min(state.pos.x, window.innerWidth - 140));
                 state.pos.y = Math.max(0, Math.min(state.pos.y, window.innerHeight - 45));
                 
                 return state;
             } catch (error) {
                 console.warn('Marker: Failed to load state', error);
-                return { color: '#ffff00', pos: { x: 100, y: 100 } };
+                return { colorIndex: 0, pos: { x: 100, y: 100 } };
             }
         }
 
+        /**
+         * Persist state to localStorage
+         */
         saveState() {
             try {
                 localStorage.setItem('marker_pro_state', JSON.stringify(this.state));
@@ -66,25 +75,23 @@
             }
         }
 
-        // حساب تباين اللون لضمان وضوح النص
-        getContrastColor(hexColor) {
-            const color = hexColor.replace('#', '');
-            const r = parseInt(color.substr(0, 2), 16);
-            const g = parseInt(color.substr(2, 2), 16);
-            const b = parseInt(color.substr(4, 2), 16);
-            const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
-            return (yiq >= 128) ? '#000000' : '#ffffff';
-        }
-
+        // ========================================
+        // 3. Highlighting Core Logic
+        // ========================================
+        /**
+         * Highlight selected text using Range and DocumentFragment
+         * Safely handles complex multi-node selections without DOM corruption
+         */
         highlightSelection() {
             try {
                 const selection = window.getSelection();
                 if (!selection.rangeCount || selection.isCollapsed) return;
 
                 const range = selection.getRangeAt(0);
-                const color = this.state.color;
-                const textColor = this.getContrastColor(color);
+                const color = this.colors[this.state.colorIndex];
+                const textColor = color === 'black' ? 'white' : 'inherit';
 
+                // DocumentFragment prevents partial DOM tree corruption
                 const fragment = range.extractContents();
                 const wrapper = document.createElement('span');
                 
@@ -102,54 +109,54 @@
             }
         }
 
+        /**
+         * Remove all highlights and restore original text
+         * Normalizes text nodes to merge adjacent nodes
+         */
         clearHighlights() {
             try {
-                const selection = window.getSelection();
-                let marksToRemove = [];
-
-                if (selection && !selection.isCollapsed) {
-                    // تحديد الـ marks المتقاطعة مع النص المحدد فقط
-                    const allMarks = document.querySelectorAll('.marker-highlight');
-                    allMarks.forEach(mark => {
-                        if (selection.containsNode(mark, true)) {
-                            marksToRemove.push(mark);
-                        }
-                    });
-                }
-
-                // إذا لم يتم العثور على marks في التحديد أو لم يكن هناك تحديد، احذف الجميع
-                if (marksToRemove.length === 0) {
-                    marksToRemove = Array.from(document.querySelectorAll('.marker-highlight'));
-                }
-
-                marksToRemove.forEach(mark => {
+                const marks = document.querySelectorAll('.marker-highlight');
+                marks.forEach(mark => {
                     const parent = mark.parentNode;
                     while (mark.firstChild) {
                         parent.insertBefore(mark.firstChild, mark);
                     }
                     mark.remove();
                 });
-
+                // Merge adjacent text nodes
                 document.body.normalize();
-                
-                if (selection && !selection.isCollapsed) {
-                    selection.removeAllRanges();
-                }
             } catch (error) {
                 console.warn('Marker: Clear highlights failed', error);
             }
         }
 
+        /**
+         * Cycle to next highlight color
+         */
+        cycleColor() {
+            this.state.colorIndex = (this.state.colorIndex + 1) % this.colors.length;
+            this.updateIndicator();
+            this.saveState();
+        }
+
+        /**
+         * Update color indicator to reflect current selection
+         */
+        updateIndicator() {
+            const indicator = this.ui?.querySelector('#marker-color-indicator');
+            if (indicator) {
+                indicator.style.backgroundColor = this.colors[this.state.colorIndex];
+            }
+        }
+
+        // ========================================
+        // 4. UI Creation & Styling
+        // ========================================
+        /**
+         * Inject CSS styles for highlights and glassmorphism UI
+         */
         injectStyles() {
             try {
-                // حقن مكتبة Font Awesome
-                if (!document.querySelector('link[href*="font-awesome"]')) {
-                    const faLink = document.createElement('link');
-                    faLink.rel = 'stylesheet';
-                    faLink.href = 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css';
-                    document.head.appendChild(faLink);
-                }
-
                 const style = document.createElement('style');
                 style.textContent = `
                     .marker-highlight {
@@ -161,37 +168,9 @@
                     #marker-ui-bar {
                         touch-action: none;
                     }
-                    #marker-ui-bar button, #marker-ui-bar input[type="color"] {
-                        transition: transform 0.1s, background 0.2s;
-                    }
-                    #marker-ui-bar button:hover, #marker-ui-bar input[type="color"]:hover {
+                    #marker-ui-bar button:hover {
                         transform: scale(1.1);
                         background: rgba(255, 255, 255, 0.1);
-                    }
-                    /* تخصيص مظهر Color Picker */
-                    #marker-color-picker {
-                        -webkit-appearance: none;
-                        -moz-appearance: none;
-                        appearance: none;
-                        width: 30px;
-                        height: 30px;
-                        border: 2px solid rgba(255, 255, 255, 0.5);
-                        border-radius: 50%;
-                        background: transparent;
-                        cursor: pointer;
-                        padding: 0;
-                        overflow: hidden;
-                    }
-                    #marker-color-picker::-webkit-color-swatch-wrapper {
-                        padding: 0;
-                    }
-                    #marker-color-picker::-webkit-color-swatch {
-                        border: none;
-                        border-radius: 50%;
-                    }
-                    #marker-color-picker::-moz-color-swatch {
-                        border: none;
-                        border-radius: 50%;
                     }
                 `;
                 document.head.appendChild(style);
@@ -200,13 +179,17 @@
             }
         }
 
-        createButton(id, title, innerHTML, onClick) {
+        /**
+         * Create styled button element safely (prevents XSS)
+         */
+        createButton(id, title, text, onClick) {
             const button = document.createElement('button');
             button.id = id;
             button.setAttribute('title', title);
-            button.innerHTML = innerHTML;
+            button.textContent = text;
             button.type = 'button';
 
+            // Apply button styles
             Object.assign(button.style, {
                 width: '30px',
                 height: '30px',
@@ -217,35 +200,25 @@
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                fontSize: '14px',
-                color: '#333' // لون الإيقونات الافتراضي
+                fontSize: '16px',
+                transition: 'transform 0.1s, background 0.2s',
+                color: 'inherit'
             });
 
             button.addEventListener('click', onClick);
             return button;
         }
 
-        createColorPicker() {
-            const picker = document.createElement('input');
-            picker.type = 'color';
-            picker.id = 'marker-color-picker';
-            picker.value = this.state.color;
-            picker.title = 'Choose Color';
-
-            picker.addEventListener('input', (e) => {
-                this.state.color = e.target.value;
-                this.saveState();
-            });
-
-            return picker;
-        }
-
+        /**
+         * Create main UI bar with glassmorphism design
+         */
         createUI() {
             this.injectStyles();
 
             const bar = document.createElement('div');
             bar.id = 'marker-ui-bar';
             
+            // Glassmorphism styling
             Object.assign(bar.style, {
                 position: 'fixed',
                 left: `${this.state.pos.x}px`,
@@ -255,119 +228,189 @@
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-evenly',
-                background: 'rgba(255, 255, 255, 0.4)', // زيادة العتامة لبروز الإيقونات
+                background: 'rgba(255, 255, 255, 0.2)',
                 backdropFilter: 'blur(10px)',
                 borderRadius: '25px',
-                border: '1px solid rgba(255, 255, 255, 0.5)',
+                border: '1px solid rgba(255, 255, 255, 0.3)',
                 boxShadow: '0 4px 15px rgba(0, 0, 0, 0.2)',
                 zIndex: '999999',
                 cursor: 'grab',
-                userSelect: 'none'
+                userSelect: 'none',
+                transition: 'box-shadow 0.2s'
             });
 
+            // Create buttons using safe DOM methods (no innerHTML)
             const highlightBtn = this.createButton(
                 'marker-btn-high',
                 'Highlight',
-                '<i class="fa-solid fa-highlighter"></i>',
+                '✑',
                 () => this.highlightSelection()
             );
 
-            const colorPicker = this.createColorPicker();
+            const colorIndicator = this.createButton(
+                'marker-color-indicator',
+                'Cycle Color',
+                '',
+                () => this.cycleColor()
+            );
+            colorIndicator.style.borderWidth = '2px';
 
             const clearBtn = this.createButton(
                 'marker-btn-clear',
-                'Clear',
-                '<i class="fa-solid fa-eraser"></i>',
+                'Clear All',
+                '✒',
                 () => this.clearHighlights()
             );
 
             bar.appendChild(highlightBtn);
-            bar.appendChild(colorPicker);
+            bar.appendChild(colorIndicator);
             bar.appendChild(clearBtn);
 
             this.ui = bar;
             document.body.appendChild(bar);
+            this.updateIndicator();
             this.initEvents();
         }
 
+        // ========================================
+        // 5. Event Handling (Mouse & Touch)
+        // ========================================
+        /**
+         * Initialize event listeners for UI interactions (mouse & touch)
+         */
         initEvents() {
             if (!this.ui) return;
+            
+            // Mouse events
             this.ui.addEventListener('mousedown', this.handleMouseDown);
-            this.ui.addEventListener('touchstart', this.handleTouchStart, { passive: false });
+            
+            // Touch events (mobile browsers)
+            this.ui.addEventListener('touchstart', this.handleTouchStart, false);
         }
 
+        /**
+         * Handle mouse down on UI bar (start drag)
+         */
         handleMouseDown(e) {
-            if (!this.ui || e.target.closest('button, input')) return;
+            if (!this.ui) return;
+            
+            // Don't drag if clicking on a button
+            if (e.target.tagName === 'BUTTON') return;
 
             this.isDragging = true;
             this.ui.style.cursor = 'grabbing';
+            
+            // Calculate offset between click point and element position
             this.dragOffset.x = e.clientX - this.ui.offsetLeft;
             this.dragOffset.y = e.clientY - this.ui.offsetTop;
 
+            // Attach listeners only during drag
             window.addEventListener('mousemove', this.handleMouseMove);
             window.addEventListener('mouseup', this.handleMouseUp);
         }
 
+        /**
+         * Handle mouse move while dragging
+         */
         handleMouseMove(e) {
             if (!this.isDragging || !this.ui) return;
 
             let x = e.clientX - this.dragOffset.x;
             let y = e.clientY - this.dragOffset.y;
+
+            // Constrain position within viewport
+            const maxX = window.innerWidth - this.ui.offsetWidth;
+            const maxY = window.innerHeight - this.ui.offsetHeight;
             
-            x = Math.max(0, Math.min(x, window.innerWidth - this.ui.offsetWidth));
-            y = Math.max(0, Math.min(y, window.innerHeight - this.ui.offsetHeight));
+            x = Math.max(0, Math.min(x, maxX));
+            y = Math.max(0, Math.min(y, maxY));
 
             this.ui.style.left = `${x}px`;
             this.ui.style.top = `${y}px`;
             this.state.pos = { x, y };
         }
 
+        /**
+         * Handle mouse up (end drag)
+         */
         handleMouseUp() {
             if (!this.isDragging) return;
+
             this.isDragging = false;
             if (this.ui) this.ui.style.cursor = 'grab';
 
+            // Clean up event listeners to prevent memory leaks
             window.removeEventListener('mousemove', this.handleMouseMove);
             window.removeEventListener('mouseup', this.handleMouseUp);
+
             this.saveState();
         }
 
+        /**
+         * Handle touch start on UI bar (mobile drag start)
+         */
         handleTouchStart(e) {
-            if (!this.ui || e.target.closest('button, input')) return;
+            if (!this.ui) return;
+            
+            // Don't drag if touching a button
+            if (e.target.tagName === 'BUTTON') return;
 
             this.isDragging = true;
+            
+            // Get touch position
             const touch = e.touches[0];
             this.dragOffset.x = touch.clientX - this.ui.offsetLeft;
             this.dragOffset.y = touch.clientY - this.ui.offsetTop;
 
-            window.addEventListener('touchmove', this.handleTouchMove, { passive: false });
-            window.addEventListener('touchend', this.handleTouchEnd, { passive: false });
+            // Attach listeners only during drag
+            window.addEventListener('touchmove', this.handleTouchMove, false);
+            window.addEventListener('touchend', this.handleTouchEnd, false);
         }
 
+        /**
+         * Handle touch move while dragging (mobile)
+         */
         handleTouchMove(e) {
             if (!this.isDragging || !this.ui) return;
+
+            // Prevent page scrolling while dragging
             e.preventDefault();
 
             const touch = e.touches[0];
             let x = touch.clientX - this.dragOffset.x;
             let y = touch.clientY - this.dragOffset.y;
 
-            x = Math.max(0, Math.min(x, window.innerWidth - this.ui.offsetWidth));
-            y = Math.max(0, Math.min(y, window.innerHeight - this.ui.offsetHeight));
+            // Constrain position within viewport
+            const maxX = window.innerWidth - this.ui.offsetWidth;
+            const maxY = window.innerHeight - this.ui.offsetHeight;
+            
+            x = Math.max(0, Math.min(x, maxX));
+            y = Math.max(0, Math.min(y, maxY));
 
             this.ui.style.left = `${x}px`;
             this.ui.style.top = `${y}px`;
             this.state.pos = { x, y };
         }
 
+        /**
+         * Handle touch end (mobile drag end)
+         */
         handleTouchEnd() {
-            if (!this.isDragging) return;
-            this.isDragging = false;
+            if (!this.isDragging) return
+
+            // Clean up event listeners to prevent memory leaks
             window.removeEventListener('touchmove', this.handleTouchMove);
             window.removeEventListener('touchend', this.handleTouchEnd);
+
             this.saveState();
         }
 
+        // ========================================
+        // 6. Initialization
+        // ========================================
+        /**
+         * Initialize when DOM is ready
+         */
         init() {
             if (document.readyState === 'complete' || document.readyState === 'interactive') {
                 this.createUI();
@@ -377,5 +420,6 @@
         }
     }
 
+    // Instantiate on script load
     new MarkerPro();
 })();
